@@ -1,0 +1,242 @@
+---
+title: "MATH1324 Assignment 1"
+subtitle: 'Applied Analytics: S&P 500 vs Bitcoin (2018–2025)'
+output:
+  html_document:
+    toc: false
+    df_print: paged
+  pdf_document:
+    toc: false
+    
+Based on the statistical analysis conducted:
+
+- **Descriptive Analysis**: Bitcoin demonstrates significantly higher volatility and positive skewness compared to S&P 500, indicating more extreme price movements and asymmetric distribution patterns.
+
+- **Trend Analysis**: Both assets show long-term appreciation trends, with S&P 500 exhibiting steady growth punctuated by periodic corrections, while Bitcoin displays cyclical boom-bust patterns with extreme volatility.
+
+- **Correlation Analysis**: The correlation between assets varies over time, with periods of both positive and negative association. The overall correlation suggests some degree of co-movement, though the relationship is not stable.
+
+- **Normality Assessment**: Statistical tests and visual diagnostics confirm that neither asset follows a normal distribution, exhibiting characteristics typical of financial time series including skewness and heavy tails.alse
+fontsize: 11pt
+geometry: margin=1in
+---
+
+
+- **Name:** Krishkumar Kumanbhai Guna  
+- **Student ID:** S4195879
+
+## Problem Statement
+This report applies core statistical methods to two financial time series—**S&P 500** and **Bitcoin**—from 2018 to 2025 to (i) summarise distributions, (ii) explore 7‑year trends, (iii) quantify and visualise correlations (including rolling 6‑month windows), and (iv) assess normality. All work is reproducible via R Markdown and kept within the 15‑page limit.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE, fig.width=6.5, fig.height=4.2)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(lubridate)
+  library(zoo)
+  library(slider)
+  library(moments)
+  library(knitr)
+})
+theme_set(theme_minimal(base_size = 11))
+```
+
+## 1. Data Import & Preparation
+We use the provided CSVs. Dates are in **D/M/Y** format and prices include thousands separators, so we parse carefully. We align both series on **common trading days** for joint analyses.
+
+```{r data-import}
+# File names must match the provided CSVs in the working directory
+btc_raw <- readr::read_csv("Bitcoin Historical Data1825.csv",
+                           show_col_types = FALSE)
+spx_raw <- readr::read_csv("S&P 500 Historical Data1825.csv",
+                           show_col_types = FALSE)
+
+# Inspect columns
+names(btc_raw); names(spx_raw)
+
+str(btc_raw)
+
+# Parse Date (d/m/Y) and numeric Price
+btc <- btc_raw |>
+  mutate(Date = lubridate::dmy(Date),
+         Price = readr::parse_number(as.character(Price))) |>
+  arrange(Date)
+
+
+spx <- spx_raw |>
+  mutate(Date = lubridate::dmy(Date),
+         Price = readr::parse_number(as.character(Price))) |>
+  arrange(Date)
+
+summary(btc$Price)
+
+summary(spx$Price)
+
+# Join on common dates for cross-series work
+joint <- inner_join(
+  spx |> select(Date, SPX = Price),
+  btc |> select(Date, BTC = Price),
+  by = "Date"
+) |>
+  arrange(Date)
+
+nrow(spx); nrow(btc); nrow(joint)
+```
+
+The data preparation results in 1,760 S&P 500 observations, 2,558 Bitcoin observations, and 1,728 aligned observations for joint analysis. The difference reflects Bitcoin's 24/7 trading versus traditional market hours for S&P 500.
+**Assumptions:** When computing 6‑month rolling correlations, we approximate six months as **126 trading days** (≈ 21 trading days/month × 6).
+
+## 2. Descriptive Statistics (Task 1)
+We compute standard descriptive measures for each dataset and compare central tendency and variability.
+
+```{r desc-stats}
+mode_val <- function(x) {
+  ux <- unique(x); ux[which.max(tabulate(match(x, ux)))]
+}
+
+desc_tbl <- bind_rows(
+  tibble(Series = "S&P 500",
+         Mean   = mean(spx$Price, na.rm=TRUE),
+         Median = median(spx$Price, na.rm=TRUE),
+         Mode   = mode_val(round(spx$Price, 2)),
+         Min    = min(spx$Price, na.rm=TRUE),
+         Max    = max(spx$Price, na.rm=TRUE),
+         Range  = Max - Min,
+         SD     = sd(spx$Price, na.rm=TRUE),
+         Var    = var(spx$Price, na.rm=TRUE),
+         Skew   = moments::skewness(spx$Price, na.rm=TRUE),
+         Kurt   = moments::kurtosis(spx$Price, na.rm=TRUE)),
+  tibble(Series = "Bitcoin",
+         Mean   = mean(btc$Price, na.rm=TRUE),
+         Median = median(btc$Price, na.rm=TRUE),
+         Mode   = mode_val(round(btc$Price, 2)),
+         Min    = min(btc$Price, na.rm=TRUE),
+         Max    = max(btc$Price, na.rm=TRUE),
+         Range  = Max - Min,
+         SD     = sd(btc$Price, na.rm=TRUE),
+         Var    = var(btc$Price, na.rm=TRUE),
+         Skew   = moments::skewness(btc$Price, na.rm=TRUE),
+         Kurt   = moments::kurtosis(btc$Price, na.rm=TRUE))
+)
+
+kable(desc_tbl, digits = 3, caption = "Table 1: Descriptive statistics for S&P 500 and Bitcoin prices (2018–2025)")
+```
+
+The descriptive statistics show notable differences between the datasets. Bitcoin exhibits substantially higher variability (larger standard deviation and range) compared to the S&P 500. Both series show positive skewness, with Bitcoin displaying more extreme skewness values. The mean exceeds the median for both assets, confirming right-skewed distributions. Bitcoin's coefficient of variation (SD/Mean) is considerably higher, indicating greater relative volatility.
+
+
+## 3. Trend & 6‑Month Rolling Correlation (Task 2)
+We plot each series over time, then show the **rolling 6‑month correlation** between S&P 500 and Bitcoin on **common trading days**.
+
+```{r trend-plots, fig.height=3.8}
+spx |> ggplot(aes(Date, Price)) + geom_line() +
+  labs(title = "Figure 1: S&P 500 Price Trend (2018–2025)", y = "Index Level")
+
+btc |> ggplot(aes(Date, Price)) + geom_line() +
+  labs(title = "Figure 2: Bitcoin Price Trend (2018–2025)", y = "USD")
+```
+
+Figure 1 demonstrates an overall upward trend in S&P 500 prices with periodic corrections. Notable declines appear around 2020 and 2022, followed by recovery phases. Figure 2 shows Bitcoin's highly volatile price movements with distinct boom-bust cycles, reaching peaks above $60,000 before experiencing significant corrections.
+
+```{r rolling-corr}
+# Rolling correlation over ~6 months = 126 trading days on the joint dates
+joint <- joint |>
+  mutate(roll_corr_6m = slider::slide_dbl(
+    .x = seq_along(SPX),
+    .f = ~ {
+      start <- pmax(1, .x - 125)
+      suppressWarnings(cor(joint$SPX[start:.x] |> na.omit(),
+                           joint$BTC[start:.x] |> na.omit()))
+    },
+    .before = 125, .complete = TRUE
+  ))
+
+# Enhanced: Calculate volatility measures for context
+joint <- joint |>
+  mutate(
+    spx_volatility = slider::slide_dbl(SPX, sd, .before = 29, .complete = TRUE),
+    btc_volatility = slider::slide_dbl(BTC, sd, .before = 29, .complete = TRUE)
+  )
+
+
+ggplot(joint, aes(Date, roll_corr_6m)) +
+  geom_line() +
+  labs(title = "Figure 3: Rolling 6-Month Correlation (S&P 500 vs Bitcoin)",
+       y = "Correlation Coefficient")
+```
+
+Figure 3 shows time-varying correlation between the assets. The correlation fluctuates between negative and positive values, indicating an unstable relationship. Higher correlations appear during certain periods, potentially coinciding with market stress events.
+
+## 4. Correlation Coefficient & Scatter Plot (Task 3)
+
+```{r static-corr}
+pearson_corr <- cor(joint$SPX, joint$BTC, use = "complete.obs")
+cat("Overall Pearson correlation coefficient:", round(pearson_corr, 4))
+```
+
+The correlation coefficient indicates the strength and direction of linear association between S&P 500 and Bitcoin prices over the full sample period.
+
+```{r scatter, fig.height=4.2}
+joint |>
+  ggplot(aes(SPX, BTC)) +
+  geom_point(alpha = 0.4, size = 1.1) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = paste0("Figure 4: S&P 500 vs Bitcoin Scatter Plot (r = ", round(pearson_corr,3), ")"),
+       x = "S&P 500 Price", y = "Bitcoin Price (USD)")
+```
+
+Figure 4 displays the linear relationship between asset prices. The fitted line slope indicates the direction of association, while point dispersion around the line reflects relationship strength. Wide scatter suggests weaker correlation despite any apparent trend.
+
+## 5. Normality Assessment (Task 4)
+We test each series for normality via **Shapiro–Wilk** and inspect **histograms** and **Q–Q plots**.
+
+```{r normality-tests}
+# Shapiro-Wilk test for normality
+sh_spx <- shapiro.test(spx$Price)
+sh_btc <- shapiro.test(btc$Price)
+
+cat("S&P 500 Shapiro-Wilk p-value:", format(sh_spx$p.value, scientific = TRUE), "\n")
+cat("Bitcoin Shapiro-Wilk p-value:", format(sh_btc$p.value, scientific = TRUE))
+```
+
+Both p-values are well below 0.05, providing strong evidence against the null hypothesis of normality for both datasets. This suggests neither price series follows a normal distribution.
+
+```{r normality-plots, fig.height=4.5}
+# Distribution histograms
+spx |> ggplot(aes(Price)) + geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
+  labs(title = "Figure 5: S&P 500 Price Distribution", x = "Price", y = "Frequency")
+
+btc |> ggplot(aes(Price)) + geom_histogram(bins = 40, fill = "orange", alpha = 0.7) +
+  labs(title = "Figure 6: Bitcoin Price Distribution", x = "Price (USD)", y = "Frequency")
+```
+
+Figures 5 and 6 show right-skewed distributions for both assets. The S&P 500 histogram shows moderate positive skew, while Bitcoin displays more extreme right skewness with a pronounced tail extending toward higher values.
+
+```{r qq-plots, fig.height=4.5}
+# Q-Q plots for normality assessment
+qq_df <- function(x) {
+  tibble(sample = sort(x), qnorm = sort(qnorm(ppoints(length(x)))))
+}
+
+qq_df(spx$Price) |>
+  ggplot(aes(qnorm, sample)) +
+  geom_point(alpha = 0.6) + geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Figure 7: Q-Q Plot - S&P 500 Price", x = "Theoretical Quantiles", y = "Sample Quantiles")
+
+qq_df(btc$Price) |>
+  ggplot(aes(qnorm, sample)) +
+  geom_point(alpha = 0.6) + geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Figure 8: Q-Q Plot - Bitcoin Price", x = "Theoretical Quantiles", y = "Sample Quantiles")
+```
+
+Figures 7 and 8 show systematic deviations from the diagonal reference line, confirming non-normality. Both plots exhibit S-shaped patterns and heavy tails, particularly pronounced in Bitcoin's case, indicating departures from normal distribution assumptions.
+
+## 6. Conclusions (Concise)
+- Bitcoin exhibits **greater variability** than S&P 500 (larger SD/range).  
+- Long‑term **trends** are visible in both series; Bitcoin’s swings are larger.  
+- Both series **depart from normality**, consistent with financial time series behaviour.
+
+## References
+- Lecture notes & course materials on descriptive statistics, correlation, and normality.
+- R packages: tidyverse, lubridate, zoo, slider, moments, ggplot2.
+
